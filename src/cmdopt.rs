@@ -85,12 +85,21 @@ pub struct CmdOpt {
     pub config: Option<std::path::PathBuf>,
 
     /// URL of the server node used by client
-    #[arg(short, long, value_name = "url", conflicts_with = "config")]
+    #[arg(short, long, value_name = "url", conflicts_with = "config", requires = "listen_addr")]
     pub url_of_node: Option<String>,
 
-    /// Local listening address associated with the URL
-    #[arg(short, long, value_name = "addr:port", requires = "url_of_node", conflicts_with = "config")]
+    /// Local listening address, it is required for url_of_node, and optional for config file.
+    /// If specified with a config file, it overrides the listen address from that config.
+    #[arg(short, long, value_name = "addr:port")]
     pub listen_addr: Option<std::net::SocketAddr>,
+
+    /// Public IP address advertised in UDP ASSOCIATE replies.
+    #[arg(short, long, value_name = "ip")]
+    pub advertise_ip: Option<std::net::IpAddr>,
+
+    /// Maximum lifetime in seconds for the UDP loop, default is 3600 seconds (1 hour).
+    #[arg(long, value_name = "seconds")]
+    pub max_lifetime: Option<u64>,
 
     /// Cache DNS Query result
     #[arg(long)]
@@ -141,6 +150,12 @@ impl CmdOpt {
             }
             if args.listen_addr.is_some() {
                 output_error_and_exit("Listen address is not supported for server");
+            }
+            if args.advertise_ip.is_some() {
+                output_error_and_exit("Advertise IP is not supported for server");
+            }
+            if args.max_lifetime.is_some() {
+                output_error_and_exit("Max lifetime is not supported for server");
             }
             if args.url_of_node.is_some() {
                 output_error_and_exit("Node URL is not supported for server");

@@ -6,13 +6,13 @@ pub(crate) mod config;
 pub(crate) mod dns;
 pub(crate) mod dump_logger;
 pub(crate) mod error;
+pub(crate) mod panel_sync;
 pub(crate) mod server;
 pub(crate) mod tcp_stream;
 pub(crate) mod tls;
 pub(crate) mod traffic_audit;
 pub(crate) mod traffic_status;
 pub(crate) mod udprelay;
-pub(crate) mod webapi;
 pub(crate) mod weirduri;
 pub mod win_svc;
 
@@ -20,7 +20,7 @@ pub use api::{over_tls_client_run, over_tls_client_run_with_ssr_url, over_tls_cl
 use bytes::BytesMut;
 pub use client::run_client;
 pub use cmdopt::{ArgVerbosity, CmdOpt, Role};
-pub use config::{Client as ClientConfig, Config, ManageClients, Server as ServerConfig, TunnelPath};
+pub use config::{Client as ClientConfig, Config, PanelSync, Server as ServerConfig, TunnelPath};
 pub use dump_logger::overtls_set_log_callback;
 pub use error::{BoxError, Error, Result};
 pub use server::run_server;
@@ -32,6 +32,26 @@ pub use traffic_status::{TrafficStatus, overtls_set_traffic_status_callback};
 pub(crate) const STREAM_BUFFER_SIZE: usize = 1024 * 32;
 #[cfg(not(target_os = "windows"))]
 pub(crate) const STREAM_BUFFER_SIZE: usize = 1024 * 32 * 3;
+
+pub(crate) fn ensure_rustls_crypto_provider() -> Result<()> {
+    if rustls::crypto::CryptoProvider::get_default().is_some() {
+        return Ok(());
+    }
+
+    let install_result = rustls::crypto::ring::default_provider().install_default();
+
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        if let Err(e) = install_result {
+            return Err(Error::from(format!("failed to install rustls ring CryptoProvider: {e:?}")));
+        } else {
+            return Err(Error::from(
+                "failed to install rustls ring CryptoProvider: provider is still not set after successful installation",
+            ));
+        }
+    }
+
+    Ok(())
+}
 
 pub(crate) fn addess_to_b64str(addr: &Address, url_safe: bool) -> String {
     let mut buf = BytesMut::with_capacity(1024);

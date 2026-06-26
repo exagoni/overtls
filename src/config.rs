@@ -7,6 +7,7 @@ use std::{
 
 pub(crate) const TEST_TIMEOUT_SECS: u64 = 10;
 pub(crate) const DEFAULT_POOL_MAX_SIZE: usize = 50;
+pub(crate) const MIN_MAX_LIFETIME_SECS: u64 = 10 * 60;
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
 pub struct Config {
@@ -105,7 +106,7 @@ pub struct Server {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_tls: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub manage_clients: Option<ManageClients>,
+    pub panel_sync: Option<PanelSync>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub certfile: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117,8 +118,8 @@ pub struct Server {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
-pub struct ManageClients {
-    pub enable: Option<bool>,
+pub struct PanelSync {
+    pub enabled: Option<bool>,
     pub webapi_url: Option<String>,
     pub webapi_token: Option<String>,
     pub node_id: Option<usize>,
@@ -146,6 +147,10 @@ pub struct Client {
     pub listen_user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub listen_password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advertise_ip: Option<std::net::IpAddr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_lifetime: Option<u64>,
     #[serde(skip)]
     pub cache_dns: bool,
     #[serde(skip)]
@@ -211,36 +216,36 @@ impl Config {
         self.client.as_ref().ok_or(Error::from("no client"))?.export_certificate(path)
     }
 
-    pub fn manage_clients(&self) -> bool {
+    pub fn panel_sync_enabled(&self) -> bool {
         let f = |s: &Server| {
-            let f2 = |c: &ManageClients| c.enable.unwrap_or(false);
-            s.manage_clients.as_ref().map(f2).unwrap_or(false)
+            let f2 = |c: &PanelSync| c.enabled.unwrap_or(false);
+            s.panel_sync.as_ref().map(f2).unwrap_or(false)
         };
         self.server.as_ref().map(f).unwrap_or(false)
     }
 
     pub fn webapi_url(&self) -> Option<String> {
-        let f = |s: &Server| s.manage_clients.as_ref().map(|c| c.webapi_url.clone()).unwrap_or(None);
+        let f = |s: &Server| s.panel_sync.as_ref().map(|c| c.webapi_url.clone()).unwrap_or(None);
         self.server.as_ref().map(f).unwrap_or(None)
     }
 
     pub fn webapi_token(&self) -> Option<String> {
         let f = |s: &Server| {
-            let f2 = |c: &ManageClients| c.webapi_token.clone();
-            s.manage_clients.as_ref().map(f2).unwrap_or(None)
+            let f2 = |c: &PanelSync| c.webapi_token.clone();
+            s.panel_sync.as_ref().map(f2).unwrap_or(None)
         };
         self.server.as_ref().map(f).unwrap_or(None)
     }
 
     pub fn node_id(&self) -> Option<usize> {
-        let f = |s: &Server| s.manage_clients.as_ref().map(|c| c.node_id).unwrap_or(None);
+        let f = |s: &Server| s.panel_sync.as_ref().map(|c| c.node_id).unwrap_or(None);
         self.server.as_ref().map(f).unwrap_or(None)
     }
 
     pub fn api_update_interval_secs(&self) -> Option<u64> {
         let f = |s: &Server| {
-            let f2 = |c: &ManageClients| c.api_update_interval_secs;
-            s.manage_clients.as_ref().map(f2).unwrap_or(None)
+            let f2 = |c: &PanelSync| c.api_update_interval_secs;
+            s.panel_sync.as_ref().map(f2).unwrap_or(None)
         };
         self.server.as_ref().map(f).unwrap_or(None)
     }
@@ -283,6 +288,26 @@ impl Config {
         } else if let Some(c) = &mut self.client {
             c.listen_host = addr.ip().to_string();
             c.listen_port = addr.port();
+        }
+    }
+
+    pub fn set_advertise_ip(&mut self, ip: Option<std::net::IpAddr>) {
+        if let Some(c) = &mut self.client {
+            c.advertise_ip = ip;
+        }
+    }
+
+    pub fn advertise_ip(&self) -> Option<std::net::IpAddr> {
+        self.client.as_ref().and_then(|c| c.advertise_ip)
+    }
+
+    pub fn max_lifetime(&self) -> Option<u64> {
+        self.client.as_ref().and_then(|c| c.max_lifetime)
+    }
+
+    pub fn set_max_lifetime(&mut self, max_lifetime: Option<u64>) {
+        if let Some(c) = &mut self.client {
+            c.max_lifetime = max_lifetime;
         }
     }
 
@@ -370,6 +395,12 @@ impl Config {
             }
 
             if !self.is_server {
+                if let Some(max_lifetime) = client.max_lifetime
+                    && max_lifetime < MIN_MAX_LIFETIME_SECS
+                {
+                    return Err(Error::from("max_lifetime cannot be less than 10 minutes"));
+                }
+
                 let mut addr = (server_host, client.server_port).to_socket_addrs()?;
                 let addr = addr.next().ok_or("address not available")?;
                 {
